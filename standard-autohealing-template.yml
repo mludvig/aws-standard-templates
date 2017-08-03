@@ -1,0 +1,546 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Vodafone Qatar VPN Gateway
+
+Metadata:
+  Author: Michael Ludvig <michael.ludvig@enterpriseit.co.nz>
+  Description: |-
+    VPN Gateway in ASG with min=1/max=1.
+    Lambda function assigns the provided EIP to the created EC2
+    Another lambda snapshots the EC2 and updates Launch Config with the new AMI ID
+
+Parameters:
+  DefaultSecurityGroup:
+    Default: sg-2f7f9c40
+    Description: Name of an existing SG providing SSH access. Can be empty.
+    Type: String
+  ElasticIP:
+    Default: 52.65.129.139
+    Description: Pre-registered Elastic IP
+    Type: String
+  HostedZone:
+    Default: demo.e-it.nz
+    Description: Route53 zone for the DNS records.
+    Type: String
+  HostedZoneId:
+    Default: Z2GTP1LVDO79YS
+    Description: Route53 zone ID for the DNS records.
+    Type: String
+  ImageId:
+    Default: ami-10918173
+    Description: AMI ID to use
+    Type: AWS::EC2::Image::Id
+  InstanceType:
+    AllowedValues:
+    - t2.micro
+    - t2.small
+    - t2.large
+    ConstraintDescription: Must be an allowed EC2 instance type. Change the template
+      to add more options.
+    Default: t2.small
+    Description: EC2 instance type
+    Type: String
+  KeyName:
+    Default: aws-sandpit
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the EC2 instances
+    Type: AWS::EC2::KeyPair::KeyName
+  SnapshotDayOfWeek:
+    Default: MON-SUN
+    Description: Day of week when Snapshot will be taken. Format "*" or "MON-SUN" or "WED,SAT"
+    Type: String
+  SnapshotHour:
+    Default: -1
+    Description: GMT Timezone hour when Snapshot will be taken. Set to -1 to disable
+      automatic snapshots.
+    MaxValue: 23
+    MinValue: -1
+    Type: Number
+  SnapshotMinute:
+    Default: 0
+    Description: Minute after Snapshot hour when Snapshot will be taken. Ignored if
+      SnapshotHour == -1.
+    MaxValue: 59
+    MinValue: 0
+    Type: Number
+  SnapshotRetainDays:
+    Default: 14
+    Description: Number of days to retain the snapshots for. Older Snapshots will
+      be deleted.
+    MinValue: 1
+    Type: Number
+  SnsTopicArn:
+    Default: arn:aws:sns:ap-southeast-2:905788939238:eittest-ml
+    Description: SNS Notification Topic for AutoScaling and CloudWatch events
+    Type: String
+  SubnetIds:
+    Default: subnet-392de151,subnet-382de150
+    Description: The subnets where this instance can be deployed through ASG
+    Type: List<AWS::EC2::Subnet::Id>
+  VfqVpnIp:
+    Default: 80.76.162.211/32
+    Description: VFQ VPN Gateway IP.
+    Type: String
+  VpcId:
+    Default: vpc-272de14f
+    Description: VPC Id of target VPC
+    Type: AWS::EC2::VPC::Id
+
+Conditions:
+  AutoSnapshot: !Not [ !Equals [ !Ref SnapshotHour, -1 ] ]
+
+Resources:
+  DNSRecordPrivate:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "${AWS::StackName}.${HostedZone}."
+      ResourceRecords:
+      - 127.0.0.1
+      TTL: 60
+      Type: A
+
+  DNSRecordPublic:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "${AWS::StackName}-pub.${HostedZone}."
+      ResourceRecords:
+      - Ref: ElasticIP
+      TTL: 900
+      Type: A
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+      Path: /
+      Policies: []
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - Ref: InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPN Gateway Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: '-1'
+      SecurityGroupIngress:
+      - CidrIp: !Ref VfqVpnIp
+        IpProtocol: 50
+      - CidrIp: !Ref VfqVpnIp
+        IpProtocol: udp
+        FromPort: 500
+        ToPort: 500
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: udp
+        FromPort: 1194
+        ToPort: 1194
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  InstanceLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - Ref: DefaultSecurityGroup
+      - Ref: InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |-
+          #cloud-config
+          timezone: Pacific/Auckland
+          hostname: ${AWS::StackName}.${HostedZone}
+          preserve_hostname: false
+          runcmd:
+          - if [ -f /etc/profile.d/local.sh ]; then exit; fi
+          - yum -y install epel-release
+          - yum-config-manager --enable epel
+          - /opt/aws/bin/cfn-init -v -r InstanceLaunchConfig --region ${AWS::Region} -s ${AWS::StackId}
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          commands:
+            20-Git-Prompt:
+              command: cp -vf /usr/share/doc/git-*/contrib/completion/git-prompt.sh /etc/bash_completion.d/
+          files:
+            /etc/profile.d/local.sh:
+              group: root
+              mode: '0644'
+              owner: root
+              source: https://gist.githubusercontent.com/mludvig/3840d8030bac5e7db95921baff87989a/raw/profile-local.sh
+            /etc/pythonstart.py:
+              group: root
+              mode: '0644'
+              owner: root
+              source: https://gist.githubusercontent.com/mludvig/a0a72e4e363e67101d673f11da2160d7/raw/pythonstart.py
+          packages:
+            yum:
+              bash-completion: []
+              git: []
+              patch: []
+
+  InstanceScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: LaunchHandlerSnsSubscription
+    Properties:
+      Cooldown: 60
+      HealthCheckGracePeriod: 60
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref InstanceLaunchConfig
+      MaxSize: 1
+      MinSize: 1
+      NotificationConfigurations:
+      - TopicARN: !Ref SnsTopicArn
+        NotificationTypes:
+        - autoscaling:EC2_INSTANCE_LAUNCH
+        - autoscaling:EC2_INSTANCE_TERMINATE
+        - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+        - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      - TopicARN: !Ref LaunchHandlerSnsTopic
+        NotificationTypes:
+        - autoscaling:EC2_INSTANCE_LAUNCH
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+        PropagateAtLaunch: 'true'
+      TerminationPolicies:
+      - OldestLaunchConfiguration
+      - OldestInstance
+      VPCZoneIdentifier: !Ref SubnetIds
+
+  LaunchHandlerSnsTopic:
+    Type: AWS::SNS::Topic
+
+  LaunchHandlerSnsSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn:
+    - LaunchHandlerSnsPermission
+    Properties:
+      Endpoint: !GetAtt LaunchHandlerLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref LaunchHandlerSnsTopic
+
+  LaunchHandlerSnsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchHandlerLambda
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref LaunchHandlerSnsTopic
+
+  LaunchHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: LaunchHandlerPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeInstances
+            - ec2:AssociateAddress
+            Effect: Allow
+            Resource: '*'
+          - Action:
+            - route53:ChangeResourceRecordSets
+            Effect: Allow
+            Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
+
+  LaunchHandlerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: >
+          import os
+          import json
+          import boto3
+          ec2=boto3.client('ec2')
+          route53=boto3.client('route53')
+          def assign_eip(instance,elastic_ip):
+           print('%s - Associate EIP %s'%(instance['InstanceId'],elastic_ip))
+           old_public_ip=instance['PublicIpAddress']
+           if old_public_ip==elastic_ip:
+            print('%s - Instance already has EIP %s'%(instance['InstanceId'],elastic_ip))
+            return
+           response=ec2.associate_address(InstanceId=instance['InstanceId'],PublicIp=elastic_ip,AllowReassociation=True)
+           if not response:
+            print('Elastic IP %s not found'%elastic_ip)
+            raise
+           try:
+            instances=ec2.describe_instances(InstanceIds=[instance['InstanceId']])
+            instance=instances['Reservations'][0]['Instances'][0]
+           except IndexError,e:
+            print('%s - Instance not found'%instance['InstanceId'])
+            raise
+           new_public_ip=instance['PublicIpAddress']
+           if new_public_ip!=elastic_ip:
+            print('%s - Association of EIP %s failed (currrent Public IP: %s)'%(instance['InstanceId'],elastic_ip,new_public_ip))
+            raise
+           print('%s - Elastic IP %s assigned, old IP was %s'%(instance['InstanceId'],new_public_ip,old_public_ip))
+           return
+          def update_dns(instance,hosted_zone_id,dns_name):
+           print('%s - Updating %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))
+           response=route53.change_resource_record_sets(HostedZoneId=hosted_zone_id,'Changes':[{'Action':'UPSERT','ResourceRecordSet':{'Name':dns_name,'Type':'A','TTL':60,'ResourceRecords':[{'Value':instance['PrivateIpAddress']}]}}]})
+           if not response:
+            print('%s - Update for %s to %s failed'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))
+            raise
+           print('%s - Updated %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))
+           return
+          def lambda_handler(event,context):
+           try:
+            elastic_ip=os.environ['elastic_ip']
+            hosted_zone_id=os.environ['hosted_zone_id']
+            dns_name=os.environ['dns_name']
+           except:
+            print('Environment variables [elastic_ip, hosted_zone_id, dns_name] must be set')
+            raise
+           for record in event['Records']:
+            message=record['Sns']['Message']
+            j=json.loads(message)
+            if j['Event']!='autoscaling:EC2_INSTANCE_LAUNCH':
+             print('Ignoring event: '+j['Event'])
+             continue
+            instance_id=j['EC2InstanceId']
+            try:
+             instances=ec2.describe_instances(InstanceIds=[instance_id])
+             instance=instances['Reservations'][0]['Instances'][0]
+            except IndexError,e:
+             print('%s - Instance not found'%instance_id)
+             raise
+            print('%s - Processing launch actions'%(instance_id))
+            assign_eip(instance,elastic_ip)
+            update_dns(instance,hosted_zone_id,dns_name)
+      Environment:
+        Variables:
+          dns_name: !Ref DNSRecordPrivate
+          elastic_ip: !Ref ElasticIP
+          hosted_zone_id: !Ref HostedZoneId
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt LaunchHandlerRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+  SnapshotRole:
+    Type: AWS::IAM::Role
+    Condition: AutoSnapshot
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: SnapshotPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - iam:PassRole
+            - ec2:CreateImage
+            - ec2:CreateTags
+            - ec2:RegisterImage
+            - ec2:DeregisterImage
+            - autoscaling:UpdateAutoScalingGroup
+            - autoscaling:CreateLaunchConfiguration
+            - autoscaling:DeleteLaunchConfiguration
+            - cloudformation:UpdateStack
+            Effect: Allow
+            Resource: '*'
+
+  SnapshotScheduler:
+    Type: AWS::Events::Rule
+    Condition: AutoSnapshot
+    Properties:
+      Description: Snapshot scheduler
+      ScheduleExpression: !Sub "cron(${SnapshotMinute} ${SnapshotHour} ? * ${SnapshotDayOfWeek} *)"
+      Targets:
+      - Arn: !GetAtt SnapshotLambda.Arn
+        Id: SnapshotLambda_Target
+
+  SnapshotSchedulerPermission:
+    Type: AWS::Lambda::Permission
+    Condition: AutoSnapshot
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SnapshotLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotScheduler.Arn
+
+  SnapshotLambda:
+    Type: AWS::Lambda::Function
+    Condition: AutoSnapshot
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - "#!/usr/bin/env python"
+            - "from __future__ import print_function"
+            - "import os"
+            - "import boto3"
+            - "from datetime import datetime,timedelta"
+            - "import time"
+            - "ec2=boto3.client('ec2')"
+            - "cfn=boto3.client('cloudformation')"
+            - "asc=boto3.client('autoscaling')"
+            - "def find_asg_instances(asg_name):"
+            - " ids=[]"
+            - " try:"
+            - "  r=asc.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])"
+            - "  asg=r['AutoScalingGroups'][0]"
+            - "  for i in asg['Instances']:"
+            - "   if i['LifecycleState']=='InService':"
+            - "    ids.append(i['InstanceId'])"
+            - "  return ids"
+            - " except:"
+            - "  print('%s - Unable to list InService instances'%asg_name)"
+            - "  raise"
+            - "def create_image(instance_id):"
+            - " def _print_log(message):"
+            - "  print('%s @ %s: %s'%(instance_id,snapshot_timestamp,message))"
+            - " snapshot_timestamp=datetime.strftime(datetime.now(),'%s')"
+            - " _print_log('Snapshotting instance')"
+            - " instance=ec2.describe_instances(InstanceIds=[instance_id])"
+            - " description=''"
+            - " tags={}"
+            - " try:"
+            - "  tags={item['Key']:item['Value']for item in instance['Reservations'][0]['Instances'][0]['Tags']}"
+            - " except:"
+            - "  pass"
+            - " if 'Name' in tags:"
+            - "  description=tags['Name']"
+            - " elif 'aws:cloudformation:stack-name' in tags:"
+            - "  description=tags['aws:cloudformation:stack-name']"
+            - " else:"
+            - "  description=instance_id"
+            - " name=instance_id+'_'+snapshot_timestamp"
+            - " description=description+' '+datetime.strftime(datetime.now(),'%Y-%m-%d %H-%M-%S')"
+            - " r=ec2.create_image(InstanceId=instance_id,Name=name,Description=description,NoReboot=False)"
+            - " image_id=r['ImageId']"
+            - " _print_log('Created image: id=%s name=%s'%(image_id,name))"
+            - " image_tags=[{'Key':'SnapshotTimestamp','Value':snapshot_timestamp},{'Key':'InstanceId','Value':instance_id}]"
+            - " if 'Name' in tags:"
+            - "  image_tags.append({'Key':'Name','Value':tags['Name']})"
+            - " ec2.create_tags(Resources=[image_id],Tags=image_tags)"
+            - " image_tags_string=' '.join(map(lambda x:'%(Key)s=%(Value)s'%x,image_tags))"
+            - " _print_log('Created tags: %s'%(image_tags_string))"
+            - " return(image_id,snapshot_timestamp)"
+            - "def update_cfn_stack(stack_name,image_id_param,image_id):"
+            - " stack=cfn.describe_stacks(StackName=stack_name)"
+            - " params_new=[]"
+            - " for param in stack['Stacks'][0]['Parameters']:"
+            - "  if param['ParameterKey']!=image_id_param:"
+            - "   params_new.append(param)"
+            - "  else:"
+            - "   params_new.append({'ParameterKey':image_id_param,'ParameterValue':image_id})"
+            - " cfn.update_stack(StackName=stack_name,UsePreviousTemplate=True,Parameters=params_new,Capabilities=['CAPABILITY_IAM'])"
+            - " print('%s - Updated parameter %s to %s'%(stack_name,image_id_param,image_id))"
+            - "def deregister_old_images(instance_id,retain_days):"
+            - " oldest_time=datetime.now()-timedelta(days=retain_days)"
+            - " oldest_timestamp=int(time.mktime(oldest_time.timetuple()))"
+            - " print('Purging images older than: %s'%oldest_time.strftime('%Y-%m-%d %H-%M-%S'))"
+            - " images=ec2.describe_images(Owners=['self'],Filters=[{'Name':'tag:InstanceId','Values':[instance_id]},{'Name':'tag-key','Values':['SnapshotTimestamp']}])"
+            - " for image in images['Images']:"
+            - "  try:"
+            - "   tags={item['Key']:item['Value']for item in image['Tags']}"
+            - "   snapshot_timestamp=int(tags['SnapshotTimestamp'])"
+            - "  except:"
+            - "   continue"
+            - "  if snapshot_timestamp<oldest_timestamp:"
+            - "   print('%s: Deregistering image'%image['ImageId'])"
+            - "   ec2.deregister_image(ImageId=image['ImageId'])"
+            - "  else:"
+            - "   print('%s: Retaining image: name=%s created=%s'%(image['ImageId'],image['Name'],image['CreationDate']))"
+            - "def lambda_handler(event,context):"
+            - " try:"
+            - "  asg_name=os.environ['asg_name']"
+            - "  cfn_stack_name=os.environ['cfn_stack_name']"
+            - "  cfn_ami_parameter=os.environ['cfn_ami_parameter']"
+            - "  retain_days=int(os.environ['retain_days'])"
+            - " except:"
+            - "  print('Environment variables [asg_name, cfn_stack, cfn_ami_parameter, retain_days] must be set')"
+            - "  raise"
+            - " ids=find_asg_instances(asg_name)"
+            - " if len(ids)<1:"
+            - "  print('%s - No instances InService found'%asg_name)"
+            - "  raise"
+            - " if len(ids)>1:"
+            - "  print('%s - Too many InService instances in ASG. This only works with min=max=1 ASGs!'%asg_name)"
+            - "  raise"
+            - " instance_id=ids[0]"
+            - " image_id,snapshot_timestamp=create_image(instance_id)"
+            - " update_cfn_stack(cfn_stack_name,cfn_ami_parameter,image_id)"
+            - " deregister_old_images(instance_id,retain_days)"
+            - " return image_id"
+      Environment:
+        Variables:
+          asg_name: !Ref InstanceScalingGroup
+          cfn_ami_parameter: ImageId
+          cfn_stack_name: !Ref AWS::StackName
+          retain_days: !Ref SnapshotRetainDays
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt SnapshotRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+Outputs:
+  DNSNamePublic:
+    Description: DNS Name
+    Value:
+      Ref: DNSRecordPublic
+  ElasticIP:
+    Description: Elastic IP
+    Value:
+      Ref: ElasticIP
