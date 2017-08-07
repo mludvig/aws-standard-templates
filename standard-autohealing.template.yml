@@ -301,8 +301,8 @@ Resources:
           - '
 
             '
-          - - "# Import external file"
-            - "%%{lambda-launcher-dns.py}%%"
+          - - ""
+            - "%%{lambda-launcher-dns.mini.py}%%"
       Environment:
         Variables:
           dns_name: !Ref DNSRecordPrivate
@@ -383,8 +383,8 @@ Resources:
           - '
 
             '
-          - - "# Import external file"
-            - "%%{lambda-snapshot-asg.py}%%"
+          - - ""
+            - "%%{lambda-snapshot-asg.mini.py}%%"
       Environment:
         Variables:
           asg_name: !Ref InstanceScalingGroup

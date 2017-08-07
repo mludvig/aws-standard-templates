@@ -52,7 +52,6 @@ def update_dns(instance, hosted_zone_id, dns_name):
     response = route53.change_resource_record_sets(
         HostedZoneId = hosted_zone_id,
         ChangeBatch = {
-            'Comment': 'Update for instance %s / %s' % (instance['InstanceId'], instance['PrivateIpAddress']),
             'Changes': [
                 {
                     'Action': 'UPSERT',

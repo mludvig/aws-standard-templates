@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # AWS Lambda function for creating an image from a given instance.
 # By Michael Ludvig - https://aws.nz
 
