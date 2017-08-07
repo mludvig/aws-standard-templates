@@ -1,0 +1,398 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Standard Auto-healing template
+
+Metadata:
+  Author: Michael Ludvig <michael.ludvig@enterpriseit.co.nz>
+  Description: |-
+    Create ASG with min=1/max=1.
+    LaunchLambdaEIP re-assigns EIP to the newly launched EC2
+    LaunchLambdaDNS updates Route53 to point to the current private IP
+    SnapshotLambda creates AMI from the running instance based on schedule
+    and updates the CFN Stack and in turn the ASG launch config with
+    the new AMI ID.
+
+Parameters:
+  DefaultSecurityGroup:
+    Description: Name of an existing SG providing SSH access.
+    Type: String
+    Default: sg-0f677e63
+
+  AssignElasticIP:
+    Description: Allocate a new EIP or use only Private IPs?
+    Type: String
+    AllowedValues:
+    - true
+    - false
+    Default: false
+
+  HostedZone:
+    Default: aws.e-it.co.nz
+    Description: Route53 zone for the DNS records.
+    Type: String
+
+  HostedZoneId:
+    Description: Route53 zone ID for the DNS records.
+    Type: String
+    Default: Z17UY0MIR6S5KA
+
+  ImageId:
+    Description: AMI ID to use
+    Type: AWS::EC2::Image::Id
+    Default: ami-10918173
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    AllowedValues:
+    - t2.micro
+    - t2.small
+    - t2.large
+    Default: t2.small
+    ConstraintDescription: Must be an allowed EC2 instance type. Change the template
+      to add more options.
+
+  KeyName:
+    Default: aws-prod
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the EC2 instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  SnapshotDayOfWeek:
+    Description: Day of week when Snapshot will be taken. Format "*" or "MON-SUN" or "WED,SAT"
+    Type: String
+    Default: MON-SUN
+
+  SnapshotHour:
+    Description: GMT Timezone hour when Snapshot will be taken. Set to -1 to disable
+      automatic snapshots.
+    Type: Number
+    MaxValue: 23
+    MinValue: -1
+    Default: 17
+
+  SnapshotMinute:
+    Description: Minute after Snapshot hour when Snapshot will be taken. Ignored if
+      SnapshotHour == -1.
+    Type: Number
+    MaxValue: 59
+    MinValue: 0
+    Default: 30
+
+  SnapshotRetainDays:
+    Description: Number of days to retain the snapshots for. Older Snapshots will
+      be deleted.
+    Type: Number
+    MinValue: 1
+    Default: 14
+
+  SnsTopicArn:
+    Description: SNS Notification Topic for AutoScaling and CloudWatch events
+    Type: String
+    Default: arn:aws:sns:ap-southeast-2:908357564651:ML_Test
+
+  SubnetIds:
+    Description: The subnets where this instance can be deployed through ASG
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: subnet-2998735e,subnet-f427e591
+
+  VpcId:
+    Description: VPC Id of target VPC
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-55026a3c
+
+Conditions:
+  AssignElasticIP: !Equals [ !Ref AssignElasticIP, true ]
+  AutoSnapshot: !Not [ !Equals [ !Ref SnapshotHour, -1 ] ]
+
+Resources:
+  DNSRecordPrivate:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "${AWS::StackName}.${HostedZone}."
+      ResourceRecords:
+      - 127.0.0.1 # Temporary placeholder, LaunchLambdaDNS will update it
+                  # when EC2 is started in the ASG
+      TTL: 60
+      Type: A
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Condition: AssignElasticIP
+
+  DNSRecordPublic:
+    Type: AWS::Route53::RecordSet
+    Condition: AssignElasticIP
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "${AWS::StackName}-pub.${HostedZone}."
+      ResourceRecords:
+      - Ref: ElasticIP
+      TTL: 900
+      Type: A
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+      Path: /
+      Policies: []
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - Ref: InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${AWS::StackName} security group"
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: '-1'
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  InstanceLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - Ref: DefaultSecurityGroup
+      - Ref: InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |-
+          #cloud-config
+          timezone: Pacific/Auckland
+          hostname: ${AWS::StackName}.${HostedZone}
+          preserve_hostname: false
+          runcmd:
+          - if [ -f /etc/profile.d/local.sh ]; then exit; fi
+          - yum -y install epel-release
+          - yum-config-manager --enable epel
+          - /opt/aws/bin/cfn-init -v -r InstanceLaunchConfig --region ${AWS::Region} -s ${AWS::StackId}
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              bash-completion: []
+              git: []
+              patch: []
+          files:
+            /etc/profile.d/local.sh:
+              group: root
+              mode: '0644'
+              owner: root
+              source: https://gist.githubusercontent.com/mludvig/3840d8030bac5e7db95921baff87989a/raw/profile-local.sh
+            /etc/pythonstart.py:
+              group: root
+              mode: '0644'
+              owner: root
+              source: https://gist.githubusercontent.com/mludvig/a0a72e4e363e67101d673f11da2160d7/raw/pythonstart.py
+          commands:
+            20-Git-Prompt:
+              command: cp -vf /usr/share/doc/git-*/contrib/completion/git-prompt.sh /etc/bash_completion.d/
+
+  InstanceScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: LaunchLambdaDNSSnsSubscription
+    Properties:
+      Cooldown: 60
+      HealthCheckGracePeriod: 60
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref InstanceLaunchConfig
+      MaxSize: 1
+      MinSize: 1
+      NotificationConfigurations:
+      - TopicARN: !Ref SnsTopicArn
+        NotificationTypes:
+        - autoscaling:EC2_INSTANCE_LAUNCH
+        - autoscaling:EC2_INSTANCE_TERMINATE
+        - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+        - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      - TopicARN: !Ref LaunchEventSnsTopic
+        NotificationTypes:
+        - autoscaling:EC2_INSTANCE_LAUNCH
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+        PropagateAtLaunch: true
+      TerminationPolicies:
+      - OldestLaunchConfiguration
+      - OldestInstance
+      VPCZoneIdentifier: !Ref SubnetIds
+
+  LaunchEventSnsTopic:
+    Type: AWS::SNS::Topic
+
+  LaunchLambdaDNSSnsSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn:
+    - LaunchLambdaDNSSnsPermission
+    Properties:
+      Endpoint: !GetAtt LaunchLambdaDNS.Arn
+      Protocol: lambda
+      TopicArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaDNSSnsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchLambdaDNS
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaDNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: LaunchLambdaDNSPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeInstances
+            - ec2:AssociateAddress
+            Effect: Allow
+            Resource: '*'
+          - Action:
+            - route53:ChangeResourceRecordSets
+            Effect: Allow
+            Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
+
+  LaunchLambdaDNS:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - "# Import external file"
+            - "%%{lambda-launcher-dns.py}%%"
+      Environment:
+        Variables:
+          dns_name: !Ref DNSRecordPrivate
+          elastic_ip: !Ref ElasticIP
+          hosted_zone_id: !Ref HostedZoneId
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt LaunchLambdaDNSRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+  SnapshotRole:
+    Type: AWS::IAM::Role
+    Condition: AutoSnapshot
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: SnapshotPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - iam:PassRole
+            - ec2:CreateImage
+            - ec2:CreateTags
+            - ec2:RegisterImage
+            - ec2:DeregisterImage
+            - autoscaling:UpdateAutoScalingGroup
+            - autoscaling:CreateLaunchConfiguration
+            - autoscaling:DeleteLaunchConfiguration
+            - cloudformation:UpdateStack
+            Effect: Allow
+            Resource: '*'
+
+  SnapshotScheduler:
+    Type: AWS::Events::Rule
+    Condition: AutoSnapshot
+    Properties:
+      Description: Snapshot scheduler
+      ScheduleExpression: !Sub "cron(${SnapshotMinute} ${SnapshotHour} ? * ${SnapshotDayOfWeek} *)"
+      Targets:
+      - Arn: !GetAtt SnapshotLambda.Arn
+        Id: SnapshotLambda_Target
+
+  SnapshotSchedulerPermission:
+    Type: AWS::Lambda::Permission
+    Condition: AutoSnapshot
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SnapshotLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotScheduler.Arn
+
+  SnapshotLambda:
+    Type: AWS::Lambda::Function
+    Condition: AutoSnapshot
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - "# Import external file"
+            - "%%{lambda-snapshot-asg.py}%%"
+      Environment:
+        Variables:
+          asg_name: !Ref InstanceScalingGroup
+          cfn_ami_parameter: ImageId
+          cfn_stack_name: !Ref AWS::StackName
+          retain_days: !Ref SnapshotRetainDays
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt SnapshotRole.Arn
+      Runtime: python2.7
+      Timeout: 10
