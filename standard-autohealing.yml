@@ -287,6 +287,10 @@ Resources:
         PolicyDocument:
           Statement:
           - Action:
+            - ec2:DescribeInstances
+            Effect: Allow
+            Resource: '*'
+          - Action:
             - route53:ChangeResourceRecordSets
             Effect: Allow
             Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
