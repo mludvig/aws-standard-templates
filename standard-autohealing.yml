@@ -98,7 +98,7 @@ Parameters:
   SubnetIds:
     Description: The subnets where this instance can be deployed through ASG
     Type: List<AWS::EC2::Subnet::Id>
-    Default: subnet-2998735e,subnet-f427e591
+    Default: subnet-cb9f74bc,subnet-bd24e6d8
 
   VpcId:
     Description: VPC Id of target VPC
