@@ -287,11 +287,6 @@ Resources:
         PolicyDocument:
           Statement:
           - Action:
-            - ec2:DescribeInstances
-            - ec2:AssociateAddress
-            Effect: Allow
-            Resource: '*'
-          - Action:
             - route53:ChangeResourceRecordSets
             Effect: Allow
             Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
@@ -312,6 +307,114 @@ Resources:
             - "import boto3"
             - "ec2=boto3.client('ec2')"
             - "route53=boto3.client('route53')"
+            - "def update_dns(instance,hosted_zone_id,dns_name):"
+            - " print('%s - Updating %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
+            - " response=route53.change_resource_record_sets(HostedZoneId=hosted_zone_id,ChangeBatch={'Changes':[{'Action':'UPSERT','ResourceRecordSet':{'Name':dns_name,'Type':'A','TTL':60,'ResourceRecords':[{'Value':instance['PrivateIpAddress']}]}}]})"
+            - " if not response:"
+            - "  print('%s - Update for %s to %s failed'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
+            - "  raise"
+            - " print('%s - Updated %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
+            - " return"
+            - "def lambda_handler(event,context):"
+            - " try:"
+            - "  hosted_zone_id=os.environ['hosted_zone_id']"
+            - "  dns_name=os.environ['dns_name']"
+            - " except:"
+            - "  print('Environment variables [hosted_zone_id, dns_name] must be set')"
+            - "  raise"
+            - " for record in event['Records']:"
+            - "  message=record['Sns']['Message']"
+            - "  j=json.loads(message)"
+            - "  if j['Event']!='autoscaling:EC2_INSTANCE_LAUNCH':"
+            - "   print('Ignoring event: '+j['Event'])"
+            - "   continue"
+            - "  instance_id=j['EC2InstanceId']"
+            - "  try:"
+            - "   instances=ec2.describe_instances(InstanceIds=[instance_id])"
+            - "   instance=instances['Reservations'][0]['Instances'][0]"
+            - "  except IndexError,e:"
+            - "   print('%s - Instance not found'%instance_id)"
+            - "   raise"
+            - "  print('%s - Processing launch actions'%(instance_id))"
+            - "  update_dns(instance,hosted_zone_id,dns_name)"
+            - "# Created by pyminifier (https://github.com/liftoff/pyminifier)"
+            - ""
+      Environment:
+        Variables:
+          dns_name: !Ref DNSRecordPrivate
+          hosted_zone_id: !Ref HostedZoneId
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt LaunchLambdaDNSRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+  LaunchLambdaEIPSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: AssignElasticIP
+    DependsOn:
+    - LaunchLambdaEIPSnsPermission
+    Properties:
+      Endpoint: !GetAtt LaunchLambdaEIP.Arn
+      Protocol: lambda
+      TopicArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaEIPSnsPermission:
+    Type: AWS::Lambda::Permission
+    Condition: AssignElasticIP
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchLambdaEIP
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaEIPRole:
+    Type: AWS::IAM::Role
+    Condition: AssignElasticIP
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: LaunchLambdaEIPPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeInstances
+            - ec2:AssociateAddress
+            Effect: Allow
+            Resource: '*'
+
+  LaunchLambdaEIP:
+    Type: AWS::Lambda::Function
+    Condition: AssignElasticIP
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - ""
+            - "#!/usr/bin/python"
+            - "import os"
+            - "import json"
+            - "import boto3"
+            - "ec2=boto3.client('ec2')"
             - "def assign_eip(instance,elastic_ip):"
             - " print('%s - Associate EIP %s'%(instance['InstanceId'],elastic_ip))"
             - " old_public_ip=instance['PublicIpAddress']"
@@ -334,21 +437,11 @@ Resources:
             - "  raise"
             - " print('%s - Elastic IP %s assigned, old IP was %s'%(instance['InstanceId'],new_public_ip,old_public_ip))"
             - " return"
-            - "def update_dns(instance,hosted_zone_id,dns_name):"
-            - " print('%s - Updating %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - " response=route53.change_resource_record_sets(HostedZoneId=hosted_zone_id,ChangeBatch={'Changes':[{'Action':'UPSERT','ResourceRecordSet':{'Name':dns_name,'Type':'A','TTL':60,'ResourceRecords':[{'Value':instance['PrivateIpAddress']}]}}]})"
-            - " if not response:"
-            - "  print('%s - Update for %s to %s failed'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - "  raise"
-            - " print('%s - Updated %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - " return"
             - "def lambda_handler(event,context):"
             - " try:"
             - "  elastic_ip=os.environ['elastic_ip']"
-            - "  hosted_zone_id=os.environ['hosted_zone_id']"
-            - "  dns_name=os.environ['dns_name']"
             - " except:"
-            - "  print('Environment variables [elastic_ip, hosted_zone_id, dns_name] must be set')"
+            - "  print('Environment variables [elastic_ip] must be set')"
             - "  raise"
             - " for record in event['Records']:"
             - "  message=record['Sns']['Message']"
@@ -365,17 +458,14 @@ Resources:
             - "   raise"
             - "  print('%s - Processing launch actions'%(instance_id))"
             - "  assign_eip(instance,elastic_ip)"
-            - "  update_dns(instance,hosted_zone_id,dns_name)"
             - "# Created by pyminifier (https://github.com/liftoff/pyminifier)"
             - ""
       Environment:
         Variables:
-          dns_name: !Ref DNSRecordPrivate
           elastic_ip: !Ref ElasticIP
-          hosted_zone_id: !Ref HostedZoneId
       Handler: index.lambda_handler
       MemorySize: 128
-      Role: !GetAtt LaunchLambdaDNSRole.Arn
+      Role: !GetAtt LaunchLambdaEIPRole.Arn
       Runtime: python2.7
       Timeout: 10
 

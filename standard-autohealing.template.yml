@@ -283,11 +283,6 @@ Resources:
         PolicyDocument:
           Statement:
           - Action:
-            - ec2:DescribeInstances
-            - ec2:AssociateAddress
-            Effect: Allow
-            Resource: '*'
-          - Action:
             - route53:ChangeResourceRecordSets
             Effect: Allow
             Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
@@ -306,11 +301,81 @@ Resources:
       Environment:
         Variables:
           dns_name: !Ref DNSRecordPrivate
-          elastic_ip: !Ref ElasticIP
           hosted_zone_id: !Ref HostedZoneId
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaDNSRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+  LaunchLambdaEIPSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: AssignElasticIP
+    DependsOn:
+    - LaunchLambdaEIPSnsPermission
+    Properties:
+      Endpoint: !GetAtt LaunchLambdaEIP.Arn
+      Protocol: lambda
+      TopicArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaEIPSnsPermission:
+    Type: AWS::Lambda::Permission
+    Condition: AssignElasticIP
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchLambdaEIP
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref LaunchEventSnsTopic
+
+  LaunchLambdaEIPRole:
+    Type: AWS::IAM::Role
+    Condition: AssignElasticIP
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+      Path: /
+      Policies:
+      - PolicyName: CloudWatchLogsPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: LaunchLambdaEIPPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeInstances
+            - ec2:AssociateAddress
+            Effect: Allow
+            Resource: '*'
+
+  LaunchLambdaEIP:
+    Type: AWS::Lambda::Function
+    Condition: AssignElasticIP
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - ""
+            - "%%{lambda-launcher-eip.mini.py}%%"
+      Environment:
+        Variables:
+          elastic_ip: !Ref ElasticIP
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt LaunchLambdaEIPRole.Arn
       Runtime: python2.7
       Timeout: 10
 
