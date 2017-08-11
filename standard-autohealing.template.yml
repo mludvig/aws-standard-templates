@@ -196,18 +196,28 @@ Resources:
               patch: []
           files:
             /etc/profile.d/local.sh:
-              group: root
-              mode: '0644'
-              owner: root
               source: https://gist.githubusercontent.com/mludvig/3840d8030bac5e7db95921baff87989a/raw/profile-local.sh
-            /etc/pythonstart.py:
+              owner: root
               group: root
               mode: '0644'
-              owner: root
+            /etc/pythonstart.py:
               source: https://gist.githubusercontent.com/mludvig/a0a72e4e363e67101d673f11da2160d7/raw/pythonstart.py
+              owner: root
+              group: root
+              mode: '0644'
+            /root/eit-setup.sh:
+              source: https://gist.githubusercontent.com/mludvig/8d1103c90846ebf0bce49ea5ab2d36ab/raw/eit-setup.sh
+              owner: root
+              group: root
+              mode: '0755'
           commands:
+            10-AD-Test:
+              command: "echo 'test -f /etc/sssd/sssd.conf || echo -e \"\\n\\e[1;33mSet up the instance and join to AD: \\e[1;31msudo /root/eit-setup.sh\\e[0m\\n\"' >> /home/ec2-user/.bash_profile"
             20-Git-Prompt:
               command: cp -vf /usr/share/doc/git-*/contrib/completion/git-prompt.sh /etc/bash_completion.d/
+            30-Disable-CloudInit:
+              # We don't want the instances re-spawn from Snapshot AMI reconfigured after boot
+              command: chkconfig cloud-init off
 
   InstanceScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
