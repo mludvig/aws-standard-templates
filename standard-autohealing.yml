@@ -171,7 +171,7 @@ Resources:
   InstanceLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      AssociatePublicIpAddress: true
+      AssociatePublicIpAddress: !If [ AssignElasticIP, "true", "false" ]
       IamInstanceProfile: !Ref InstanceProfile
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
