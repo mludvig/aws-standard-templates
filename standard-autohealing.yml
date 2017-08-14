@@ -185,10 +185,12 @@ Resources:
           timezone: Pacific/Auckland
           hostname: ${AWS::StackName}.${HostedZone}
           preserve_hostname: false
+          ssh_pwauth: True
           runcmd:
           - if [ -f /etc/profile.d/local.sh ]; then exit; fi
           - yum -y install epel-release
           - yum-config-manager --enable epel
+          - "echo \"ssh_pwauth: true\" >> /etc/cloud/cloud.cfg.d/90_eit.cfg"
           - /opt/aws/bin/cfn-init -v -r InstanceLaunchConfig --region ${AWS::Region} -s ${AWS::StackId}
     Metadata:
       AWS::CloudFormation::Init:
