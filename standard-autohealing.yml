@@ -18,9 +18,9 @@ Metadata:
     the new AMI ID.
 
 Parameters:
-  DefaultSecurityGroup:
-    Description: Name of an existing SG providing SSH access.
-    Type: String
+  AssignSecurityGroups:
+    Description: SG IDs to assign to the instance.
+    Type: List<AWS::EC2::SecurityGroup::Id>
     Default: sg-0f677e63
 
   AssignElasticIP:
@@ -93,17 +93,12 @@ Parameters:
   SnsTopicArn:
     Description: SNS Notification Topic for AutoScaling and CloudWatch events
     Type: String
-    Default: arn:aws:sns:ap-southeast-2:908357564651:ML_Test
+    Default: arn:aws:sns:ap-southeast-2:908357564651:EIT_AWS_Support
 
   SubnetIds:
     Description: The subnets where this instance can be deployed through ASG
     Type: List<AWS::EC2::Subnet::Id>
     Default: subnet-cb9f74bc,subnet-bd24e6d8
-
-  VpcId:
-    Description: VPC Id of target VPC
-    Type: AWS::EC2::VPC::Id
-    Default: vpc-55026a3c
 
 Conditions:
   AssignElasticIP: !Equals [ !Ref AssignElasticIP, true ]
@@ -156,18 +151,6 @@ Resources:
       Roles:
       - Ref: InstanceRole
 
-  InstanceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: !Sub "${AWS::StackName} security group"
-      VpcId: !Ref VpcId
-      SecurityGroupEgress:
-      - CidrIp: 0.0.0.0/0
-        IpProtocol: '-1'
-      Tags:
-      - Key: Name
-        Value: !Ref AWS::StackName
-
   InstanceLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
@@ -176,9 +159,7 @@ Resources:
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
-      SecurityGroups:
-      - Ref: DefaultSecurityGroup
-      - Ref: InstanceSecurityGroup
+      SecurityGroups: !Ref AssignSecurityGroups
       UserData:
         Fn::Base64: !Sub |-
           #cloud-config
