@@ -50,10 +50,11 @@ Parameters:
     Description: EC2 instance type
     Type: String
     AllowedValues:
+    - t2.nano
     - t2.micro
     - t2.small
     - t2.large
-    Default: t2.small
+    Default: t2.micro
     ConstraintDescription: Must be an allowed EC2 instance type. Change the template
       to add more options.
 
