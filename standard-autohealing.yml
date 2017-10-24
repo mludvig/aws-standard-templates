@@ -58,6 +58,11 @@ Parameters:
     ConstraintDescription: Must be an allowed EC2 instance type. Change the template
       to add more options.
 
+  InstancePrivateIp:
+    Description: Instance Private IP address, leave at 127.0.0.1, it will be auto-updated.
+    Type: String
+    Default: 127.0.0.1
+
   KeyName:
     Default: aws-prod
     Description: Name of an existing EC2 KeyPair to enable SSH access to the EC2 instances
@@ -112,8 +117,8 @@ Resources:
       HostedZoneName: !Sub "${HostedZone}."
       Name: !Sub "${AWS::StackName}.${HostedZone}."
       ResourceRecords:
-      - 127.0.0.1 # Temporary placeholder, LaunchLambdaDNS will update it
-                  # when EC2 is started in the ASG
+      # LaunchLambdaDNS will update it when EC2 is started in the ASG
+      - !Ref InstancePrivateIp
       TTL: 60
       Type: A
 
@@ -281,13 +286,24 @@ Resources:
         PolicyDocument:
           Statement:
           - Action:
-            - ec2:DescribeInstances
+            - iam:PassRole
+            - ec2:Describe*
+            - route53:ListHostedZones
+            - route53:GetChange
+            - cloudformation:DescribeStacks
             Effect: Allow
             Resource: '*'
+
           - Action:
             - route53:ChangeResourceRecordSets
             Effect: Allow
             Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
+
+          - Action:
+            - cloudformation:UpdateStack
+            Effect: Allow
+            #Resource: !Ref AWS::StackId  # This doesn't work for some reason ...
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
 
   LaunchLambdaDNS:
     Type: AWS::Lambda::Function
@@ -304,21 +320,23 @@ Resources:
             - "import json"
             - "import boto3"
             - "ec2=boto3.client('ec2')"
-            - "route53=boto3.client('route53')"
-            - "def update_dns(instance,hosted_zone_id,dns_name):"
-            - " print('%s - Updating %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - " response=route53.change_resource_record_sets(HostedZoneId=hosted_zone_id,ChangeBatch={'Changes':[{'Action':'UPSERT','ResourceRecordSet':{'Name':dns_name,'Type':'A','TTL':60,'ResourceRecords':[{'Value':instance['PrivateIpAddress']}]}}]})"
-            - " if not response:"
-            - "  print('%s - Update for %s to %s failed'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - "  raise"
-            - " print('%s - Updated %s to %s'%(instance['InstanceId'],dns_name,instance['PrivateIpAddress']))"
-            - " return"
+            - "cfn=boto3.client('cloudformation')"
+            - "def update_cfn_stack(stack_name,param_name,param_value):"
+            - " stack=cfn.describe_stacks(StackName=stack_name)"
+            - " params_new=[]"
+            - " for param in stack['Stacks'][0]['Parameters']:"
+            - "  if param['ParameterKey']!=param_name:"
+            - "   params_new.append(param)"
+            - "  else:"
+            - "   params_new.append({'ParameterKey':param_name,'ParameterValue':param_value})"
+            - " cfn.update_stack(StackName=stack_name,UsePreviousTemplate=True,Parameters=params_new,Capabilities=['CAPABILITY_IAM'])"
+            - " print('%s - Updated parameter %s to %s'%(stack_name,param_name,param_value))"
             - "def lambda_handler(event,context):"
             - " try:"
-            - "  hosted_zone_id=os.environ['hosted_zone_id']"
-            - "  dns_name=os.environ['dns_name']"
+            - "  cfn_stack_name=os.environ['cfn_stack_name']"
+            - "  cfn_param_name=os.environ['cfn_param_name']"
             - " except:"
-            - "  print('Environment variables [hosted_zone_id, dns_name] must be set')"
+            - "  print('Environment variables [cfn_stack_name, cfn_param_name] must be set')"
             - "  raise"
             - " for record in event['Records']:"
             - "  message=record['Sns']['Message']"
@@ -330,17 +348,18 @@ Resources:
             - "  try:"
             - "   instances=ec2.describe_instances(InstanceIds=[instance_id])"
             - "   instance=instances['Reservations'][0]['Instances'][0]"
+            - "   print('%s - Processing launch actions'%(instance_id))"
+            - "   print('%r'%instance)"
+            - "   update_cfn_stack(cfn_stack_name,cfn_param_name,instance['PrivateIpAddress'])"
             - "  except IndexError,e:"
             - "   print('%s - Instance not found'%instance_id)"
             - "   raise"
-            - "  print('%s - Processing launch actions'%(instance_id))"
-            - "  update_dns(instance,hosted_zone_id,dns_name)"
             - "# Created by pyminifier (https://github.com/liftoff/pyminifier)"
             - ""
       Environment:
         Variables:
-          dns_name: !Ref DNSRecordPrivate
-          hosted_zone_id: !Ref HostedZoneId
+          cfn_stack_name: !Ref AWS::StackName
+          cfn_param_name: "InstancePrivateIp"
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaDNSRole.Arn
