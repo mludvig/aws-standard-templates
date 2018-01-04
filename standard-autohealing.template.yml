@@ -210,7 +210,9 @@ Resources:
 
   InstanceScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
-    DependsOn: LaunchLambdaDNSSnsSubscription
+    DependsOn:
+    - LaunchLambdaDNSSnsSubscription
+    - LaunchLambdaEIPSnsSubscription
     Properties:
       Cooldown: 60
       HealthCheckGracePeriod: 60
