@@ -144,7 +144,23 @@ Resources:
           Principal:
             Service: ec2.amazonaws.com
       Path: /
-      Policies: []
+      Policies:
+      - PolicyName: SelfSnapshot
+        PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeInstance
+            Effect: Allow
+            Resource: '*'
+          - Action:
+            - cloudformation:DescribeStackResource
+            Effect: Allow
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/SnapshotLambda"
+          - Action:
+            - lambda:InvokeFunction
+            Effect: Allow
+            #Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${SnapshotLambda}"
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-SnapshotLambda-*"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -183,6 +199,7 @@ Resources:
               bash-completion: []
               git: []
               patch: []
+              jq: []
           files:
             /etc/profile.d/local.sh:
               source: https://gist.githubusercontent.com/mludvig/3840d8030bac5e7db95921baff87989a/raw/profile-local.sh
@@ -212,7 +229,7 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn:
     - LaunchLambdaDNSSnsSubscription
-    - LaunchLambdaEIPSnsSubscription
+    #- LaunchLambdaEIPSnsSubscription   # This can't be conditional :(
     Properties:
       Cooldown: 60
       HealthCheckGracePeriod: 60
@@ -444,6 +461,7 @@ Resources:
       Targets:
       - Arn: !GetAtt SnapshotLambda.Arn
         Id: SnapshotLambda_Target
+        Input: '{ "reboot": true }'
 
   SnapshotSchedulerPermission:
     Type: AWS::Lambda::Permission
@@ -471,7 +489,6 @@ Resources:
           asg_name: !Ref InstanceScalingGroup
           cfn_ami_parameter: ImageId
           cfn_stack_name: !Ref AWS::StackName
-          retain_days: !Ref SnapshotRetainDays
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn

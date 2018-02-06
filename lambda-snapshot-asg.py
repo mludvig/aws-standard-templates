@@ -2,7 +2,7 @@
 # By Michael Ludvig - https://aws.nz
 
 # Trigger this function from CloudWatch Scheduler (cron-like)
-# Pass the Instance ID in 'instance_id' environment variable.
+# Pass the Autoscaling Group name in 'asg_name' environment variable.
 
 from __future__ import print_function
 import os
@@ -27,7 +27,7 @@ def find_asg_instances(asg_name):
         print('%s - Unable to list InService instances' % asg_name)
         raise
 
-def create_image(instance_id):
+def create_image(asg_name, instance_id, reboot):
     def _print_log(message):
         print('%s @ %s: %s' % (instance_id, snapshot_timestamp, message))
 
@@ -51,12 +51,13 @@ def create_image(instance_id):
 
     name = instance_id + '_' + snapshot_timestamp
     description = description + ' ' + datetime.strftime(datetime.now(), '%Y-%m-%d %H-%M-%S')
-    r = ec2.create_image(InstanceId = instance_id, Name = name, Description = description, NoReboot = False)
+    r = ec2.create_image(InstanceId = instance_id, Name = name, Description = description, NoReboot = not reboot)
     image_id = r['ImageId']
     _print_log('Created image: id=%s name=%s' % (image_id, name))
     image_tags = [
         {'Key': 'SnapshotTimestamp', 'Value': snapshot_timestamp },
-        {'Key': 'InstanceId', 'Value': instance_id }
+        {'Key': 'InstanceId', 'Value': instance_id },
+        {'Key': 'AsgName', 'Value': asg_name },
     ]
     if 'Name' in tags:
         image_tags.append({ 'Key': 'Name', 'Value': tags['Name'] })
@@ -77,35 +78,20 @@ def update_cfn_stack(stack_name, image_id_param, image_id):
     cfn.update_stack(StackName = stack_name, UsePreviousTemplate = True, Parameters = params_new, Capabilities=['CAPABILITY_IAM'])
     print('%s - Updated parameter %s to %s' % (stack_name, image_id_param, image_id))
 
-def deregister_old_images(instance_id, retain_days):
-    oldest_time = datetime.now() - timedelta(days = retain_days)
-    oldest_timestamp = int(time.mktime(oldest_time.timetuple()))
-    print('Purging images older than: %s' % oldest_time.strftime('%Y-%m-%d %H-%M-%S'))
-
-    images = ec2.describe_images(Owners=['self'], Filters=[
-        { 'Name': 'tag:InstanceId', 'Values': [ instance_id ] },
-        { 'Name': 'tag-key', 'Values': [ 'SnapshotTimestamp' ] }
-    ])
-    for image in images['Images']:
-        try:
-            tags = {item['Key']:item['Value'] for item in image['Tags']}
-            snapshot_timestamp = int(tags['SnapshotTimestamp'])
-        except:
-            continue
-        if snapshot_timestamp < oldest_timestamp:
-            print('%s: Deregistering image' % image['ImageId'])
-            ec2.deregister_image(ImageId = image['ImageId'])
-        else:
-            print('%s: Retaining image: name=%s created=%s' % (image['ImageId'], image['Name'], image['CreationDate']))
-
 def lambda_handler(event, context):
     try:
         asg_name = os.environ['asg_name']
         cfn_stack_name = os.environ['cfn_stack_name']
         cfn_ami_parameter = os.environ['cfn_ami_parameter']
-        retain_days = int(os.environ['retain_days'])
     except:
-        print('Environment variables [asg_name, cfn_stack, cfn_ami_parameter, retain_days] must be set')
+        print('ERROR: Environment variables must be set: asg_name, cfn_stack, cfn_ami_parameter')
+        raise
+
+    try:
+        reboot = event.get('reboot', True)
+        assert(type(event['reboot']) in [ bool, int ])
+    except:
+        print('ERROR: Event JSON expected: { "reboot": true / false }')
         raise
 
     ids = find_asg_instances(asg_name)
@@ -118,8 +104,7 @@ def lambda_handler(event, context):
 
     instance_id = ids[0]
 
-    image_id, snapshot_timestamp = create_image(instance_id)
+    image_id, snapshot_timestamp = create_image(asg_name, instance_id, reboot)
     update_cfn_stack(cfn_stack_name, cfn_ami_parameter, image_id)
-    deregister_old_images(instance_id, retain_days)
 
     return image_id
