@@ -11,16 +11,14 @@ from datetime import datetime, timedelta
 import time
 
 ec2 = boto3.client('ec2')
-cfn = boto3.client('cloudformation')
-asc = boto3.client('autoscaling')
 
-def deregister_old_images(instance_id, retain_days):
+def deregister_old_images(asg_name, retain_days):
     oldest_time = datetime.now() - timedelta(days = retain_days)
     oldest_timestamp = int(time.mktime(oldest_time.timetuple()))
     print('Purging images older than: %s' % oldest_time.strftime('%Y-%m-%d %H-%M-%S'))
 
     images = ec2.describe_images(Owners=['self'], Filters=[
-        { 'Name': 'tag:InstanceId', 'Values': [ instance_id ] },
+        { 'Name': 'tag:AsgName', 'Values': [ asg_name ] },
         { 'Name': 'tag-key', 'Values': [ 'SnapshotTimestamp' ] }
     ])
     for image in images['Images']:
@@ -38,22 +36,9 @@ def deregister_old_images(instance_id, retain_days):
 def lambda_handler(event, context):
     try:
         asg_name = os.environ['asg_name']
-        cfn_stack_name = os.environ['cfn_stack_name']
-        cfn_ami_parameter = os.environ['cfn_ami_parameter']
         retain_days = int(os.environ['retain_days'])
     except:
-        print('ERROR: Environment variables must be set: asg_name, cfn_stack, cfn_ami_parameter')
+        print('ERROR: Environment variables must be set: asg_name, retain_days')
         raise
 
-    ids = find_asg_instances(asg_name)
-    if len(ids) < 1:
-        print('%s - No instances InService found' % asg_name)
-        raise
-    if len(ids) > 1:
-        print('%s - Too many InService instances in ASG. This only works with min=max=1 ASGs!' % asg_name)
-        raise
-
-    instance_id = ids[0]
-    deregister_old_images(instance_id, retain_days)
-
-    return image_id
+    deregister_old_images(asg_name, retain_days)

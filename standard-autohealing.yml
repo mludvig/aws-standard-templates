@@ -555,6 +555,8 @@ Resources:
       - Arn: !GetAtt SnapshotLambda.Arn
         Id: SnapshotLambda_Target
         Input: '{ "reboot": true }'
+      - Arn: !GetAtt SnapshotRemoverLambda.Arn
+        Id: SnapshotRemoverLambda_Target
 
   SnapshotSchedulerPermission:
     Type: AWS::Lambda::Permission
@@ -562,6 +564,15 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref SnapshotLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotScheduler.Arn
+
+  SnapshotRemoverSchedulerPermission:
+    Type: AWS::Lambda::Permission
+    Condition: AutoSnapshot
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SnapshotRemoverLambda
       Principal: events.amazonaws.com
       SourceArn: !GetAtt SnapshotScheduler.Arn
 
@@ -668,6 +679,59 @@ Resources:
           asg_name: !Ref InstanceScalingGroup
           cfn_ami_parameter: ImageId
           cfn_stack_name: !Ref AWS::StackName
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt SnapshotRole.Arn
+      Runtime: python2.7
+      Timeout: 10
+
+  SnapshotRemoverLambda:
+    Type: AWS::Lambda::Function
+    Condition: AutoSnapshot
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Join:
+          - '
+
+            '
+          - - ""
+            - "from __future__ import print_function"
+            - "import os"
+            - "import boto3"
+            - "from datetime import datetime,timedelta"
+            - "import time"
+            - "ec2=boto3.client('ec2')"
+            - "def deregister_old_images(asg_name,retain_days):"
+            - " oldest_time=datetime.now()-timedelta(days=retain_days)"
+            - " oldest_timestamp=int(time.mktime(oldest_time.timetuple()))"
+            - " print('Purging images older than: %s'%oldest_time.strftime('%Y-%m-%d %H-%M-%S'))"
+            - " images=ec2.describe_images(Owners=['self'],Filters=[{'Name':'tag:AsgName','Values':[asg_name]},{'Name':'tag-key','Values':['SnapshotTimestamp']}])"
+            - " for image in images['Images']:"
+            - "  try:"
+            - "   tags={item['Key']:item['Value']for item in image['Tags']}"
+            - "   snapshot_timestamp=int(tags['SnapshotTimestamp'])"
+            - "  except:"
+            - "   continue"
+            - "  if snapshot_timestamp<oldest_timestamp:"
+            - "   print('%s: Deregistering image'%image['ImageId'])"
+            - "   ec2.deregister_image(ImageId=image['ImageId'])"
+            - "  else:"
+            - "   print('%s: Retaining image: name=%s created=%s'%(image['ImageId'],image['Name'],image['CreationDate']))"
+            - "def lambda_handler(event,context):"
+            - " try:"
+            - "  asg_name=os.environ['asg_name']"
+            - "  retain_days=int(os.environ['retain_days'])"
+            - " except:"
+            - "  print('ERROR: Environment variables must be set: asg_name, retain_days')"
+            - "  raise"
+            - " deregister_old_images(asg_name,retain_days)"
+            - "# Created by pyminifier (https://github.com/liftoff/pyminifier)"
+            - ""
+      Environment:
+        Variables:
+          asg_name: !Ref InstanceScalingGroup
+          retain_days: !Ref SnapshotRetainDays
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn
