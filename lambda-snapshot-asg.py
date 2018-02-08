@@ -49,7 +49,7 @@ def create_image(asg_name, instance_id, reboot):
     else:
         description = instance_id
 
-    name = instance_id + '_' + snapshot_timestamp
+    name = asg_name+'_'+snapshot_timestamp
     description = description + ' ' + datetime.strftime(datetime.now(), '%Y-%m-%d %H-%M-%S')
     r = ec2.create_image(InstanceId = instance_id, Name = name, Description = description, NoReboot = not reboot)
     image_id = r['ImageId']
@@ -61,6 +61,9 @@ def create_image(asg_name, instance_id, reboot):
     ]
     if 'Name' in tags:
         image_tags.append({ 'Key': 'Name', 'Value': tags['Name'] })
+    if 'aws:cloudformation:stack-name' in tags:
+        image_tags.append({ 'Key': 'StackName', 'Value': tags['aws:cloudformation:stack-name'] })
+
     ec2.create_tags(Resources = [image_id], Tags = image_tags)
     image_tags_string = ' '.join(map(lambda x: '%(Key)s=%(Value)s' % x, image_tags))
     _print_log('Created tags: %s' % (image_tags_string))

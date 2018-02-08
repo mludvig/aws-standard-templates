@@ -368,9 +368,8 @@ Resources:
             - "   instances=ec2.describe_instances(InstanceIds=[instance_id])"
             - "   instance=instances['Reservations'][0]['Instances'][0]"
             - "   print('%s - Processing launch actions'%(instance_id))"
-            - "   print('%r'%instance)"
             - "   update_cfn_stack(cfn_stack_name,cfn_param_name,instance['PrivateIpAddress'])"
-            - "  except IndexError,e:"
+            - "  except IndexError as e:"
             - "   print('%s - Instance not found'%instance_id)"
             - "   raise"
             - "# Created by pyminifier (https://github.com/liftoff/pyminifier)"
@@ -382,7 +381,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaDNSRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   LaunchLambdaEIPSnsSubscription:
@@ -464,7 +463,7 @@ Resources:
             - " try:"
             - "  instances=ec2.describe_instances(InstanceIds=[instance['InstanceId']])"
             - "  instance=instances['Reservations'][0]['Instances'][0]"
-            - " except IndexError,e:"
+            - " except IndexError as e:"
             - "  print('%s - Instance not found'%instance['InstanceId'])"
             - "  raise"
             - " new_public_ip=instance['PublicIpAddress']"
@@ -489,7 +488,7 @@ Resources:
             - "  try:"
             - "   instances=ec2.describe_instances(InstanceIds=[instance_id])"
             - "   instance=instances['Reservations'][0]['Instances'][0]"
-            - "  except IndexError,e:"
+            - "  except IndexError as e:"
             - "   print('%s - Instance not found'%instance_id)"
             - "   raise"
             - "  print('%s - Processing launch actions'%(instance_id))"
@@ -502,7 +501,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaEIPRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   SnapshotRole:
@@ -625,7 +624,7 @@ Resources:
             - "  description=tags['aws:cloudformation:stack-name']"
             - " else:"
             - "  description=instance_id"
-            - " name=instance_id+'_'+snapshot_timestamp"
+            - " name=asg_name+'_'+snapshot_timestamp"
             - " description=description+' '+datetime.strftime(datetime.now(),'%Y-%m-%d %H-%M-%S')"
             - " r=ec2.create_image(InstanceId=instance_id,Name=name,Description=description,NoReboot=not reboot)"
             - " image_id=r['ImageId']"
@@ -633,6 +632,8 @@ Resources:
             - " image_tags=[{'Key':'SnapshotTimestamp','Value':snapshot_timestamp},{'Key':'InstanceId','Value':instance_id},{'Key':'AsgName','Value':asg_name},]"
             - " if 'Name' in tags:"
             - "  image_tags.append({'Key':'Name','Value':tags['Name']})"
+            - " if 'aws:cloudformation:stack-name' in tags:"
+            - "  image_tags.append({'Key':'StackName','Value':tags['aws:cloudformation:stack-name']})"
             - " ec2.create_tags(Resources=[image_id],Tags=image_tags)"
             - " image_tags_string=' '.join(map(lambda x:'%(Key)s=%(Value)s'%x,image_tags))"
             - " _print_log('Created tags: %s'%(image_tags_string))"
@@ -682,7 +683,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   SnapshotRemoverLambda:
@@ -735,5 +736,5 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10

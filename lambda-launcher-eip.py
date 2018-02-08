@@ -32,7 +32,7 @@ def assign_eip(instance, elastic_ip):
     try:
         instances = ec2.describe_instances(InstanceIds=[instance['InstanceId']])
         instance = instances['Reservations'][0]['Instances'][0]
-    except IndexError, e:
+    except IndexError as e:
         print('%s - Instance not found' % instance['InstanceId'])
         raise
 
@@ -62,7 +62,7 @@ def lambda_handler(event, context):
         try:
             instances = ec2.describe_instances(InstanceIds=[instance_id])
             instance = instances['Reservations'][0]['Instances'][0]
-        except IndexError, e:
+        except IndexError as e:
             print('%s - Instance not found' % instance_id)
             raise
         print('%s - Processing launch actions' % (instance_id))

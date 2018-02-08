@@ -338,7 +338,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaDNSRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   LaunchLambdaEIPSnsSubscription:
@@ -409,7 +409,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt LaunchLambdaEIPRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   SnapshotRole:
@@ -503,7 +503,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10
 
   SnapshotRemoverLambda:
@@ -525,5 +525,5 @@ Resources:
       Handler: index.lambda_handler
       MemorySize: 128
       Role: !GetAtt SnapshotRole.Arn
-      Runtime: python2.7
+      Runtime: python3.6
       Timeout: 10

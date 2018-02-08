@@ -45,8 +45,8 @@ def lambda_handler(event, context):
             instances = ec2.describe_instances(InstanceIds=[instance_id])
             instance = instances['Reservations'][0]['Instances'][0]
             print('%s - Processing launch actions' % (instance_id))
-            print('%r' % instance)
+            #print('%r' % instance)
             update_cfn_stack(cfn_stack_name, cfn_param_name, instance['PrivateIpAddress'])
-        except IndexError, e:
+        except IndexError as e:
             print('%s - Instance not found' % instance_id)
             raise
