@@ -26,21 +26,24 @@ def assign_eip(instance, elastic_ip):
 
     response = ec2.associate_address(InstanceId=instance['InstanceId'], PublicIp=elastic_ip, AllowReassociation=True)
     if not response:
-        print('Elastic IP %s not found' % elastic_ip)
-        raise
+        message = 'Elastic IP %s not found' % elastic_ip
+        print(message)
+        raise RuntimeError(message)
 
     try:
         instances = ec2.describe_instances(InstanceIds=[instance['InstanceId']])
         instance = instances['Reservations'][0]['Instances'][0]
     except IndexError as e:
-        print('%s - Instance not found' % instance['InstanceId'])
-        raise
+        message = '%s - Instance not found' % instance['InstanceId']
+        print(message)
+        raise RuntimeError(message)
 
     new_public_ip = instance['PublicIpAddress']
     if new_public_ip != elastic_ip:
-        print('%s - Association of EIP %s failed (currrent Public IP: %s)' %
-                (instance['InstanceId'], elastic_ip, new_public_ip))
-        raise
+        message = '%s - Association of EIP %s failed (currrent Public IP: %s)' % (
+                    instance['InstanceId'], elastic_ip, new_public_ip)
+        print(message)
+        raise RuntimeError(message)
 
     print('%s - Elastic IP %s assigned, old IP was %s' % (instance['InstanceId'], new_public_ip, old_public_ip))
     return

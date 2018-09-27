@@ -99,11 +99,13 @@ def lambda_handler(event, context):
 
     ids = find_asg_instances(asg_name)
     if len(ids) < 1:
-        print('%s - No instances InService found' % asg_name)
-        raise
+        message = '%s - No instances InService found' % asg_name
+        print(message)
+        raise RuntimeError(message)
     if len(ids) > 1:
-        print('%s - Too many InService instances in ASG. This only works with min=max=1 ASGs!' % asg_name)
-        raise
+        message = '%s - Too many InService instances in ASG. This only works with min=max=1 ASGs!' % asg_name
+        print(message)
+        raise RuntimeError(message)
 
     instance_id = ids[0]
 
