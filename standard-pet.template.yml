@@ -110,6 +110,13 @@ Resources:
     Type: AWS::EC2::EIP
     Condition: AssignElasticIP
 
+  ElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Condition: AssignElasticIP
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      NetworkInterfaceId: !Ref InstanceEni
+
   DNSRecordPublic:
     Type: AWS::Route53::RecordSet
     Condition: AssignElasticIP
@@ -170,24 +177,34 @@ Resources:
         IpProtocol: -1
         CidrIp: 192.168.144.0/22
 
+  InstanceEni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref SubnetId
+      GroupSet:
+      - !Ref AssignSecurityGroup
+      - !Ref InstanceSecurityGroup
+      SourceDestCheck: true
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
   Instance:
     Type: AWS::EC2::Instance
     Properties:
-      AssociatePublicIpAddress: !If [ AssignElasticIP, "true", "false" ]
       IamInstanceProfile: !Ref InstanceProfile
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
-      SecurityGroupIds:
-      - !Ref AssignSecurityGroup
-      - !Ref InstanceSecurityGroup
       #BlockDeviceMappings:
       #- DeviceName: "/dev/sda1"
       #  Ebs:
       #    VolumeType: "gp2"
       #    DeleteOnTermination: "true"
       #    VolumeSize: "25"
-      SubnetId: !Ref SubnetId
+      NetworkInterfaces:
+      - NetworkInterfaceId: !Ref InstanceEni
+        DeviceIndex: 0
       Tags:
       - Key: Name
         Value: !Ref AWS::StackName
