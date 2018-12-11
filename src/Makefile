@@ -16,7 +16,7 @@ clean:
 	rm -f ${PY_MINIS} ${ALL}
 
 standard-autohealing.yml: standard-autohealing.template.yml lambda-launcher-dns.mini.py lambda-launcher-eip.mini.py lambda-snapshot-asg.mini.py lambda-snapshot-remover.mini.py
-	./import-files.py --yaml $< > $@
+	python3 import-files.py --yaml $< > $@
 
 standard-pet.yml: standard-pet.template.yml lambda-snapshot-instance.mini.py lambda-snapshot-remover.mini.py
-	./import-files.py --yaml $< > $@
+	python3 import-files.py --yaml $< > $@

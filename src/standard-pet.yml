@@ -39,7 +39,7 @@ Parameters:
   ImageId:
     Description: AMI ID to use
     Type: AWS::EC2::Image::Id
-    Default: ami-942dd1f6   # ami-942dd1f6 = amzn-ami-hvm-2017.09.1.20180115-x86_64-gp2
+    Default: ami-08589eca6dcc9b39c  # amzn2-ami-hvm-2.0.20181114-x86_64-gp2 / Amazon Linux 2 AMI 2.0.20181114 x86_64 HVM gp2
 
   InstanceType:
     Description: EC2 instance type

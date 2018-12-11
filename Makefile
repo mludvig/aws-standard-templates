@@ -5,10 +5,10 @@ ALL := standard-autohealing.yml standard-pet.yml
 all: ${ALL}
 
 standard-autohealing.yml: src
-	ln -s src/$@ $@
+	ln -fv src/$@ $@
 
 standard-pet.yml: src
-	ln -s src/$@ $@
+	ln -fv src/$@ $@
 
 src:
 	$(MAKE) -C $@
