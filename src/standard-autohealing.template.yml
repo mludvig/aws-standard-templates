@@ -17,7 +17,6 @@ Parameters:
   AssignSecurityGroups:
     Description: SG IDs to assign to the instance.
     Type: List<AWS::EC2::SecurityGroup::Id>
-    Default: sg-0f677e63
 
   AssignElasticIP:
     Description: Allocate a new EIP or use only Private IPs?
@@ -28,14 +27,12 @@ Parameters:
     Default: false
 
   HostedZone:
-    Default: aws.e-it.co.nz
     Description: Route53 zone for the DNS records.
     Type: String
 
   HostedZoneId:
-    Description: Route53 zone ID for the DNS records.
+    Description: Route53 zone ID for the DNS records (e.g Z1234567890)
     Type: String
-    Default: Z17UY0MIR6S5KA
 
   ImageId:
     Description: AMI ID to use
@@ -54,7 +51,6 @@ Parameters:
     Default: 127.0.0.1
 
   KeyName:
-    Default: aws-prod
     Description: Name of an existing EC2 KeyPair to enable SSH access to the EC2 instances
     Type: AWS::EC2::KeyPair::KeyName
 
@@ -89,12 +85,10 @@ Parameters:
   SnsTopicArn:
     Description: SNS Notification Topic for AutoScaling and CloudWatch events
     Type: String
-    Default: arn:aws:sns:ap-southeast-2:908357564651:EIT_AWS_Support
 
   SubnetIds:
-    Description: The subnets where this instance can be deployed through ASG
+    Description: The subnets where this instance can be deployed through ASG. Select Public subnets if AllocateElasticIP is True.
     Type: List<AWS::EC2::Subnet::Id>
-    Default: subnet-cb9f74bc,subnet-bd24e6d8
 
 Conditions:
   AssignElasticIP: !Equals [ !Ref AssignElasticIP, true ]
@@ -183,7 +177,6 @@ Resources:
           - if [ -f /etc/profile.d/local.sh ]; then exit; fi
           - yum -y install epel-release
           - yum-config-manager --enable epel
-          - "echo \"ssh_pwauth: true\" >> /etc/cloud/cloud.cfg.d/90_eit.cfg"
           - /opt/aws/bin/cfn-init -v -r InstanceLaunchConfig --region ${AWS::Region} -s ${AWS::StackId}
     Metadata:
       AWS::CloudFormation::Init:
@@ -205,14 +198,7 @@ Resources:
               owner: root
               group: root
               mode: '0644'
-            /root/eit-setup.sh:
-              source: https://gist.githubusercontent.com/mludvig/8d1103c90846ebf0bce49ea5ab2d36ab/raw/eit-setup.sh
-              owner: root
-              group: root
-              mode: '0755'
           commands:
-            10-AD-Test:
-              command: "echo 'test -f /etc/sssd/sssd.conf || echo -e \"\\n\\e[1;33mSet up the instance and join to AD: \\e[1;31msudo /root/eit-setup.sh\\e[0m\\n\"' >> /home/ec2-user/.bash_profile"
             20-Git-Prompt:
               command: cp -vf /usr/share/doc/git-*/contrib/completion/git-prompt.sh /etc/bash_completion.d/
             30-Disable-CloudInit:
